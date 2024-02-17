@@ -1,0 +1,3 @@
+/home/nastia/CLionProjects/third_csc/cmake-build-debug/CMakeFiles/third_csc.dir
+/home/nastia/CLionProjects/third_csc/cmake-build-debug/CMakeFiles/edit_cache.dir
+/home/nastia/CLionProjects/third_csc/cmake-build-debug/CMakeFiles/rebuild_cache.dir
