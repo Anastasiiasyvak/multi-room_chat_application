@@ -3,4 +3,4 @@ project(third_csc)
 
 set(CMAKE_CXX_STANDARD 17)
 
-add_executable(third_csc main.cpp)
+add_executable(third_csc client.cpp)
