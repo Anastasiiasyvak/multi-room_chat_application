@@ -1,135 +1,260 @@
 #include <iostream>
+#include <cstring>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <pthread.h>
+#include <thread>
 #include <vector>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
 #include <algorithm>
+#include <sys/socket.h>
+#include <pthread.h>
 
-class TCPServer{
+struct Message {
+    std::string content;
+    std::string clientName;
+    int clientSocket;
+    int id;
+};
+
+class LinuxNetworkSystem {
 public:
-
-    struct Client {
-        int socket;
-        int roomID;
-        int clientID;
-    };
-
-    std::vector<Client> clients;
-    pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-    int clientCounter = 0;
-
-    static void* handleClientHelper(void* arg) {
-        TCPServer* server = static_cast<TCPServer*>(arg);
-        return server->handleClient();
+    LinuxNetworkSystem() {
+        mutex = PTHREAD_MUTEX_INITIALIZER;
     }
 
-    void* handleClient() {
-        int clientSocket = clients.back().socket;
+    int createSocket(int domain, int type, int protocol) {
+        return socket(domain, type, protocol);
+    }
 
-        int roomID;
-        int bytesReceived = recv(clientSocket, &roomID, sizeof(roomID), 0);
-        if (bytesReceived <= 0) {
-            std::cerr << "Failed to receive room ID from client.\n";
-            close(clientSocket);
-            pthread_exit(nullptr);
-        }
+    int bindSocket(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+        return bind(sockfd, addr, addrlen);
+    }
 
+    int listenSocket(int sockfd, int backlog) {
+        return listen(sockfd, backlog);
+    }
+
+    int acceptConnection(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+        return accept(sockfd, addr, addrlen);
+    }
+
+    ssize_t receiveData(int sockfd, void *buf, size_t len, int flags) {
+        return recv(sockfd, buf, len, flags);
+    }
+
+    ssize_t sendData(int sockfd, const void *buf, size_t len, int flags) {
+        return send(sockfd, buf, len, flags);
+    }
+
+    int closeSocket(int sockfd) {
+        return close(sockfd);
+    }
+
+    void error(const char* message) const {
         pthread_mutex_lock(&mutex);
-        clientCounter++;
-        int clientID = clientCounter;
+        perror(message);
         pthread_mutex_unlock(&mutex);
+    }
 
-        clients.push_back({clientSocket, roomID, clientID});
+private:
+    mutable pthread_mutex_t mutex;
+};
 
-        std::cout << "Client " << clientID << " joined room " << roomID << std::endl;
+class Room {
+public:
+    std::string name;
+    std::thread roomThread;
+    std::vector<int> clients;
+    std::queue<Message> messageQueue;
+    mutable std::mutex mutex;
+    std::condition_variable messageCondition;
+    int ID = 0;
+    LinuxNetworkSystem linuxNetworkSystem;
 
-        char buffer[4096];
-        while (true) {
-            bytesReceived = recv(clientSocket, buffer, sizeof(buffer), 0);
-            if (bytesReceived <= 0) {
-                pthread_mutex_lock(&mutex);
-                auto it = std::find_if(clients.begin(), clients.end(), [&](const Client& c) {
-                    return c.socket == clientSocket;
-                });
-                if (it != clients.end()) {
-                    clients.erase(it);
-                }
-                pthread_mutex_unlock(&mutex);
-                std::cout << "Client " << clientID << " disconnected.\n";
-                close(clientSocket);
-                pthread_exit(nullptr);
-            }
-            buffer[bytesReceived] = '\0';
-            std::cout << "Client " << clientID << " message: " << buffer << std::endl;
+    explicit Room(std::string name) : name(std::move(name)) {
+        roomThread = std::thread(&Room::broadcastMessages, this);
+    }
 
-            pthread_mutex_lock(&mutex);
-            for (const auto& client : clients) {
-                if (client.roomID == roomID && client.socket != clientSocket) {
-                    if (send(client.socket, buffer, bytesReceived, 0) == -1) {
-                        std::cerr << "Failed to send message to client.\n";
+    void addClient(int clientSocket) {
+        std::lock_guard<std::mutex> lock(mutex);
+        clients.push_back(clientSocket);
+        std::cout << "Client " << clientSocket << " joined room " << name << std::endl;
+    }
+
+    void deleteClient(int clientSocket) {
+        std::lock_guard<std::mutex> lock(mutex);
+        clients.erase(std::remove(clients.begin(), clients.end(), clientSocket), clients.end());
+        std::cout << "Client " << clientSocket << " left the room " << name << std::endl;
+    }
+
+    void addMessageToQueue(const Message& message) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            messageQueue.push(message);
+        }
+        messageCondition.notify_one();
+    }
+
+    std::string getNameRoom() const {
+        return name;
+    }
+
+    void broadcastMessages() {
+        while (true)
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            messageCondition.wait(lock, [this]{ return !messageQueue.empty();});
+            while (!messageQueue.empty())
+            {
+                Message message = messageQueue.front();
+                messageQueue.pop();
+                lock.unlock();
+                for (int clientSocket : clients) {
+                    if (clientSocket != message.clientSocket){
+                        std::string messageContentName = "\n" + message.clientName + ": " + message.content;
+                        linuxNetworkSystem.sendData(clientSocket, messageContentName.c_str(), messageContentName.length(), 0);
                     }
                 }
+                lock.lock();
             }
-            pthread_mutex_unlock(&mutex);
+            if (clients.empty()){
+                break;
+            }
         }
-
     }
+};
 
-    void startServer(){
-        int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+class TCPServer{
+private:
+    int port = 12345;
+    sockaddr_in clientAddr;
+    LinuxNetworkSystem linuxNetworkSystem;
+    std::vector<std::thread> clientThreads;
+    std::vector<std::unique_ptr<Room>> rooms;
+    std::mutex roomsMutex;
+
+    void listeningSocket(){
+        int serverSocket = linuxNetworkSystem.createSocket(AF_INET, SOCK_STREAM, 0);
         if (serverSocket == -1) {
-            std::cerr << "Socket creation failed.\n";
+            linuxNetworkSystem.error("Error creating socket");
             return;
         }
 
         sockaddr_in serverAddr;
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = INADDR_ANY;
-        serverAddr.sin_port = htons(8080);
+        serverAddr.sin_port = htons(port);
 
-        if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == -1) {
-            std::cerr << "Bind failed.\n";
-            close(serverSocket);
+        if (linuxNetworkSystem.bindSocket(serverSocket, reinterpret_cast<struct sockaddr*>(&serverAddr), sizeof(serverAddr)) == -1) {
+            linuxNetworkSystem.error("Bind failed");
+            linuxNetworkSystem.closeSocket(serverSocket);
             return;
         }
 
-        if (listen(serverSocket, SOMAXCONN) == -1) {
-            std::cerr << "Listen failed.\n";
-            close(serverSocket);
+        if (linuxNetworkSystem.listenSocket(serverSocket, SOMAXCONN) == -1) {
             return;
+        } else {
+            std::cout << "Server listening on port " << port << std::endl;
+
+            while (true) {
+                socklen_t clientAddrLen = sizeof(clientAddr);
+                int clientSocket = linuxNetworkSystem.acceptConnection(serverSocket, reinterpret_cast<struct sockaddr*>(&clientAddr), &clientAddrLen);
+                if (clientSocket == -1) {
+                    linuxNetworkSystem.error("Error accepting client connection");
+                    break;
+                }
+
+                pthread_mutex_lock(&mutex);
+                std::cout << "Accepted connection from " << inet_ntoa(clientAddr.sin_addr) << ":" << ntohs(clientAddr.sin_port) << std::endl;
+                pthread_mutex_unlock(&mutex);
+
+                clientThreads.emplace_back(&TCPServer::handleCommands, this, clientSocket);
+            }
         }
 
-        std::cout << "Server is listening on port 8080...\n";
+        linuxNetworkSystem.closeSocket(serverSocket);
+    }
+
+public:
+    TCPServer() : linuxNetworkSystem() {
+        listeningSocket();
+    }
+
+    ~TCPServer() {
+        for (auto& thread : clientThreads) {
+            thread.join();
+        }
+    }
+
+    void getRoomId(int clientSocket, std::string& clientName, std::string& roomName){
+        char buffer[1024];
+        memset(buffer, 0, sizeof(buffer));
+        ssize_t bytesRead = linuxNetworkSystem.receiveData(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesRead <= 0) {
+            std::cerr << "Failed to read client's name.\n";
+            close(clientSocket);
+            return;
+        }
+        clientName = std::string(buffer, bytesRead);
+
+        memset(buffer, 0, sizeof(buffer));
+        bytesRead = linuxNetworkSystem.receiveData(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesRead <= 0) {
+            std::cerr << "Failed to read room name.\n";
+            close(clientSocket);
+            return;
+        }
+        roomName = std::string(buffer, bytesRead);
+    }
+
+    Room* addRoom(const std::string& roomName) {
+        std::lock_guard<std::mutex> lock(roomsMutex);
+        for (auto& room : rooms) {
+            if (room->getNameRoom() == roomName) {
+                return room.get();
+            }
+        }
+        rooms.emplace_back(std::make_unique<Room>(roomName));
+        return rooms.back().get();
+    }
+
+    void handleCommands(int clientSocket) {
+        std::string roomName;
+        std::string clientName;
+        getRoomId(clientSocket, clientName, roomName);
+
+        Room *room = addRoom(roomName);
+        room->addClient(clientSocket);
 
         while (true) {
-            sockaddr_in clientAddr;
-            socklen_t clientAddrLen = sizeof(clientAddr);
-            int clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
-            if (clientSocket == -1) {
-                std::cerr << "Accept failed.\n";
-                close(serverSocket);
-                return;
+            char buffer[1024];
+            memset(buffer, 0, sizeof(buffer));
+            ssize_t receivedBytes = linuxNetworkSystem.receiveData(clientSocket, buffer, sizeof(buffer), 0);
+            if (receivedBytes > 0) {
+                std::string content(buffer, receivedBytes);
+                if (content == "STOP") {
+                    room->deleteClient(clientSocket);
+                    std::cout << "Client " << clientSocket << " left the room " << roomName << std::endl;
+                } else {
+                    Message message{content, clientName, clientSocket, room->ID++};
+                    room->addMessageToQueue(message);
+                }
+            } else {
+                linuxNetworkSystem.error("Received failed.");
+                break;
             }
-
-            pthread_mutex_lock(&mutex);
-            clients.push_back({clientSocket, -1, -1});
-            pthread_mutex_unlock(&mutex);
-
-            pthread_t thread;
-            if (pthread_create(&thread, nullptr, &TCPServer::handleClientHelper, this) != 0) {
-                std::cerr << "Failed to create thread.\n";
-                close(clientSocket);
-            }
-            pthread_detach(thread);
         }
 
+        room->deleteClient(clientSocket);
+        linuxNetworkSystem.closeSocket(clientSocket);
     }
 };
 
-
-
 int main() {
     TCPServer server;
-    server.startServer();
     return 0;
 }
