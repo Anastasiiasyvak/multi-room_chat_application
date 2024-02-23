@@ -69,7 +69,11 @@ public:
             std::getline(std::cin, message);
             if (message == "STOP") {
                 break;
+            } else if (message.substr(0, 6) == "REJOIN") {
+                send(clientSocket, message.c_str(), message.size(), 0);
+                continue;
             }
+
             send(clientSocket, message.c_str(), message.size(), 0);
         }
     }

@@ -239,6 +239,15 @@ public:
                 if (content == "STOP") {
                     room->deleteClient(clientSocket);
                     std::cout << "Client " << clientSocket << " left the room " << roomName << std::endl;
+                } else if (content.substr(0, 6) == "REJOIN") {
+                    std::string newRoomName = content.substr(7);
+                    Room *newRoom = addRoom(newRoomName);
+                    if (newRoom != room) {
+                        room->deleteClient(clientSocket);
+                        newRoom->addClient(clientSocket);
+                        room = newRoom;
+                        roomName = newRoomName;
+                    }
                 } else {
                     Message message{content, clientName, clientSocket, room->ID++};
                     room->addMessageToQueue(message);
@@ -252,6 +261,7 @@ public:
         room->deleteClient(clientSocket);
         linuxNetworkSystem.closeSocket(clientSocket);
     }
+
 };
 
 int main() {
