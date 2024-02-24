@@ -16,7 +16,7 @@ This project implements a cartoon chat where users can communicate in different 
    
 ## Interaction Process:
 
-The server initializes on port 12348 with the IP Address 127.0.0.1 (IPv4, AF_INET), utilizing TCP (SOCK_STREAM). Each char transmitted corresponds to 1 byte in C++.
+The server initializes on port 12346 with the IP Address 127.0.0.1 (IPv4, AF_INET), utilizing TCP (SOCK_STREAM). Each char transmitted corresponds to 1 byte in C++.
 
 ## Client Interaction Process:
 
@@ -44,7 +44,7 @@ The server initializes on port 12348 with the IP Address 127.0.0.1 (IPv4, AF_INE
 
 ### Initialization:
 
-1. The server initializes on port 12348 with the IP Address 127.0.0.1 (IPv4, AF_INET), utilizing TCP (SOCK_STREAM) for communication.
+1. The server initializes on port 12346 with the IP Address 127.0.0.1 (IPv4, AF_INET), utilizing TCP (SOCK_STREAM) for communication.
 2. It creates a socket using the `socket()` system call, specifying the address family as IPv4 (AF_INET) and the communication type as TCP (SOCK_STREAM).
 3. The server binds the socket to its address using the `bind()` system call and listens for incoming connections using the `listen()` system call.
 
