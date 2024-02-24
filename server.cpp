@@ -73,7 +73,7 @@ public:
     int ID = 0;
     LinuxNetworkSystem linuxNetworkSystem;
 
-    explicit Room(std::string name) : name(std::move(name)) {
+    Room(std::string name) : name(name) {
         roomThread = std::thread(&Room::broadcastMessages, this);
     }
 
@@ -130,7 +130,7 @@ pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 class TCPServer{
 private:
-    int port = 12345;
+    int port = 12346;
     sockaddr_in clientAddr;
     LinuxNetworkSystem linuxNetworkSystem;
     std::vector<std::thread> clientThreads;
@@ -263,6 +263,7 @@ public:
     }
 
 };
+
 
 int main() {
     TCPServer server;

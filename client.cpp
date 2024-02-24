@@ -7,6 +7,7 @@
 
 class TCPClient{
 public:
+
     TCPClient(const char* serverIp, int port){
         clientSocket = socket(AF_INET, SOCK_STREAM, 0);
         if (clientSocket == -1) {
@@ -26,7 +27,6 @@ public:
     bool connectToServer() {
         return connect(clientSocket, reinterpret_cast<struct sockaddr*>(&serverAddr), sizeof(serverAddr)) != -1;
     }
-
 
     void receiveServerMessage() {
         char fileMessage[1024];
@@ -50,12 +50,7 @@ public:
     void getRoomID() const {
         std::string roomId;
         std::cout << "Enter room id: ";
-        while (!(std::cin >> roomId)) {
-            std::cin.clear();
-            std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-            std::cout << "Invalid input. Please enter an integer: ";
-        }
-        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        getline(std::cin, roomId);
         send(clientSocket, roomId.c_str(), roomId.size(), 0);
     };
 
@@ -85,7 +80,7 @@ private:
 };
 
 int main() {
-    int port = 12345;
+    int port = 12346;
     const char* serverIp = "127.0.0.1";
 
     TCPClient client(serverIp, port);
